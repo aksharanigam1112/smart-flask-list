@@ -1,0 +1,7 @@
+Flask==1.1.1
+Flask-Cors==3.0.8
+gunicorn==19.9.0
+pandas==0.24.2
+numpy==1.16.5
+sklearn==0.0
+turicreate==5.7.1
