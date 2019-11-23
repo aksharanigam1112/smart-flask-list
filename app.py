@@ -9,7 +9,7 @@ sys.path.append("..")
 import json
 from flask_cors import CORS
 from flask import request
-from datetime import datetime
+import datetime
 import json as json
 from pymongo import MongoClient
 from sklearn.svm import SVR
@@ -18,11 +18,13 @@ from scipy import stats
 from sklearn.ensemble import RandomForestRegressor
 from bson import ObjectId
 import math
+from flask_ngrok import run_with_ngrok
 
 app=Flask(__name__)
 CORS(app)
+run_with_ngrok(app)
 
-url='mongodb+srv://test:test@cluster0-nihvn.mongodb.net/test?retryWrites=true&w=majority'
+url='mongodb+srv://test:test@cluster0-12rwi.azure.mongodb.net/test?retryWrites=true&w=majority'
 db_name='shop_list'
 
 
@@ -31,14 +33,16 @@ def read_json(url,db_name,table_name):
     db = client.get_database(db_name)
     if(table_name=="customers"):
         return(db.customers)
-    elif(table_name=="transaction"):
-        return(db.transaction)
+    elif(table_name=="transactions"):
+        return(db.transactions)
     elif(table_name=="itemlist"):
         return(db.itemlist)
     elif(table_name=="category"):
         return(db.category)
     elif(table_name=="rta"):
         return(db.rta)
+    elif(table_name=="Recent_purchases"):
+        return(db.Recent_purchases)
 
 #functions for recommendation -->>
 #To get the overall users list
@@ -56,7 +60,7 @@ def get_data(users):
     item_data=[]#output 2
     target_data=[]#output 3
 
-    transactions_table=read_json(url,db_name,"transaction")
+    transactions_table=read_json(url,db_name,"transactions")
 
     for user in users:
         #An object to find in the table
@@ -78,6 +82,22 @@ def calc_error(predicted,actual):
         error=error+((actual[i]-predicted[i])*(actual[i]-predicted[i]))
     error=error/len(actual)
     return math.sqrt(error)
+
+#Prefetches the dates and quantity with corresponding to item_id in recent purchases
+def prefetch(item_id_dict,item_info):
+  for x in item_info:
+    for y in x["Transaction"]:
+      if(item_id_dict.get(y['item_id'])!=None):
+        dates=[]
+        quantity=[]
+        item_trans = y['item_transactions']
+        for z in item_trans:
+          dates.append(z['date'])
+          quantity.append(z['quantity'])
+        item_id_dict[y['item_id']]["dates"]=dates
+        item_id_dict[y['item_id']]["quantity"]=quantity
+  return item_id_dict
+        
 
 def removeOutliers(frequency,threshold):
     modified_freq=[]
@@ -124,7 +144,7 @@ def get_dates_quantity(dates,quantity,remove_outliers=0,outliers_threshold=0):
 def algo(dates,quantity,gap):
     dates = np.array(dates).astype('datetime64[D]')
     #preparing frequncy array(dates_arr)
-    (dates_arr , quantity) = get_dates_quantity(dates,quantity,1,1.5)
+    (dates_arr , quantity) = get_dates_quantity(dates,quantity,0,1.5)
 
     #INITIALISING THE MODEL
     
@@ -142,15 +162,15 @@ def algo(dates,quantity,gap):
  
     #PREDICTING FROM THE FITTED MODEL
     if predict_dates > max(dates_arr):
-        maximum = max(dates_arr)[0]
-        k = 0
-        max_quant = 0
-        for i in dates_arr:
-            if (i[0] == maximum):
-                if (quantity[k] > max_quant):
-                    max_quant = quantity[k]
-            k += 1
-    return(round(max_quant))
+      maximum = max(dates_arr)[0]
+      k = 0
+      max_quant = 0
+      for i in dates_arr:
+        if (i[0] == maximum):
+          if (quantity[k] > max_quant):
+            max_quant = quantity[k]
+        k += 1
+      return(round(max_quant))
 
     rbf= svr_rbf.predict(dates_arr)
     rf=random_forest.predict(dates_arr)#rf=Random Forest
@@ -161,6 +181,7 @@ def algo(dates,quantity,gap):
     for i in range(0,len(rbf)):
         rounded_rbf.append(round(rbf[i]))
         rounded_rf.append(round(rf[i]))
+    
     error_rbf=calc_error(rounded_rbf,quantity)
     error_rf=calc_error(rounded_rf,quantity)
     #print(error_rbf,error_rf) -->> ERROR PRINTING
@@ -169,28 +190,12 @@ def algo(dates,quantity,gap):
     else:
         return random_forest.predict(predict_dates)[0]
 
-def JsonPrediction(transaction,itemID,gap,user):
-    search_user={}
-    search_user["cust_id"]=user
-    item = transaction.find(search_user,{"Transaction.item_transactions.date":1, "Transaction.item_transactions.quantity":1,"Transaction.item_id":1,"_id":0}).sort("Transaction.item_transactions.date")
-    for x in item:
-        for y in x["Transaction"]:
-            dates = []
-            quantity = []
-      
-        if(y['item_id']==itemID):
-            item_trans = y['item_transactions']
-            
-            for z in item_trans:
-                dates.append(z['date'])
-                quantity.append(z['quantity'])
-            ans = algo(dates,quantity,gap)       
-        return ans
 
 @app.route('/ml/recommend',methods=['GET'])
 #Main function for recommendation
 def recommend():
-    userid = request.args.get('userid')
+
+    user_id = request.args.get('userid')
     users=get_user()
     #users=[25]
     user_data,item_data,target_data=get_data(users)
@@ -213,48 +218,67 @@ def recommend():
 
 @app.route('/ml/predict',methods=['GET'])
 def predict():
-    userid = request.args.get('userid')
-    transaction =read_json(url,db_name,"transaction")
-    rta = read_json(url,db_name,"rta")#Getting the rta table
+  userid = request.args.get('userid')
+  transaction =read_json(url,db_name,"transactions")
+  recent_purchases = read_json(url,db_name,"Recent_purchases")#Getting the rta table
 
-    # itemlist = db.itemlist
-    user_dict={}
-    user_dict["cust_id"]=userid
-    itemDetails = rta.find(user_dict,{'item_details.avg':1 ,'item_details.last_date':1,'_id':0 , 'item_details.item_id':1 })#Mongo query
+  # itemlist = db.itemlist
+  user_dict={}
+  user_dict["cust_id"]=int(userid)
+  item_info = transaction.find(user_dict,{"Transaction.item_transactions.date":1, "Transaction.item_transactions.quantity":1,"Transaction.item_id":1,"_id":0})
+  itemDetails = recent_purchases.find(user_dict,{'_id':0})#Mongo query
 
-    output = []
-    for item in itemDetails:
-        for one_item in item['item_details']:
-            avg = one_item['avg'] #Fetch the avg of an item for a particular user
-            datetimeobj = datetime.datetime.now()
+  output = []
+  item_id_dict={}#Stores the item and dates and quantity array
+  item_info_dict=[] #stores the avg , last_date and item_id
+  
+  for item in itemDetails:
+      for one_item in item['recents']:
+        item_obj_dict={}
+        item_id_dict[one_item["item_id"]]={}
+        item_obj_dict["item_id"]=one_item["item_id"]
+        item_obj_dict["avg"]=one_item["avg"]
+        item_obj_dict["last_date"]=one_item["last_date"]
+        item_info_dict.append(item_obj_dict)
 
-            date = datetimeobj.strftime("%Y") + "-" +datetimeobj.strftime("%m") + "-" + datetimeobj.strftime("%d")
+  item_id_dict=prefetch(item_id_dict,item_info)        
+  for one_item in item_info_dict:
+    avg = one_item['avg'] #Fetch the avg of an item for a particular user
+    datetimeobj = datetime.datetime.now()
+    date = datetimeobj.strftime("%Y") + "-" +datetimeobj.strftime("%m") + "-" + datetimeobj.strftime("%d")
         
-            last_date_of_purchase=one_item['last_date']
+    last_date_of_purchase=one_item['last_date']
         
-        
-            t = (datetime.datetime.strptime(date,"%Y-%m-%d") - datetime.datetime.strptime(last_date_of_purchase,"%Y-%m-%d"))
-        
-            t = t.days
-            avg=round(avg)
-            if(avg !=0 and ((avg)-2)<=t and t<=(avg+3)):
-                item_pred = {}
-                itemid = one_item['item_id']
-                ans = JsonPrediction(transaction=transaction,itemID=itemid,gap=t)
-            
-                dictionary = dict({'item_id' : itemid})
+    t = (datetime.datetime.strptime(date,"%Y-%m-%d") - datetime.datetime.strptime(last_date_of_purchase,"%Y-%m-%d"))
+    t = t.days
+    avg=math.ceil(avg)
+    if(avg !=0 and ((avg)-2)<=t and t<=(avg+3)):
+      item_pred = {}
+      itemid = one_item['item_id']
+      item_dict=item_id_dict.get(itemid)
+      
+      if(len(item_dict["dates"])>2 and len(item_dict["quantity"])>2):
+        ans = algo(dates=item_dict["dates"],quantity=item_dict["quantity"],gap=t)
+        dictionary = dict({'item_id' : itemid})
 
             # itemName = itemlist.find( dictionary, {'item_name':1 ,'item_id':1, '_id':0})
-                item_pred['itemID'] = itemid
-            # for name in itemName['item_name']:
-                item_pred['itemName'] = "Test_items"
-                item_pred['Quantity'] = round(ans)
-                output.append(item_pred)
             
-    json_output=json.dumps(output)
-    return json_output
-
-
+        item_pred['itemID'] = itemid
+            # for name in itemName['item_name']:
+        item_pred['itemName'] = "Test_items"
+        item_pred['Quantity'] = round(ans)
+        output.append(item_pred)
+        
+        # else:
+        #   print("Hello")
+        #   customer_dict={}
+        #   customer_dict["cust_id"]=user
+        #   info_dict={}
+        #   info_dict["recent.item_id"]=one_item["item_id"]
+        #   recent_transactions.update(customer_dict,{'$pull':info_dict})
+  json_output=json.dumps(output)
+  return json_output
 
 if __name__=='__main__':
-    app.run(debug=True)
+    app.run()
+
