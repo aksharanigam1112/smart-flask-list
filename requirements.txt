@@ -6,3 +6,4 @@ numpy==1.16.5
 sklearn==0.0
 turicreate==5.7.1
 pymongo==3.9.0
+matplotlib==3.1.2
