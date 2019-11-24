@@ -5,5 +5,6 @@ pandas==0.24.2
 numpy==1.16.5
 sklearn==0.0
 turicreate==5.7.1
-pymongo==3.9.0
+pymongo[srv]==3.9.0
 matplotlib==3.1.2
+datetime==4.3
