@@ -22,7 +22,6 @@ import math
 
 app=Flask(__name__)
 CORS(app)
-app.run(debug=True)
 # run_with_ngrok(app)
 
 url='mongodb+srv://test:test@cluster0-12rwi.azure.mongodb.net/test?retryWrites=true&w=majority'
@@ -281,5 +280,6 @@ def predict():
   return json_output
 
 if __name__=='__main__':
+    app.run(debug=True)
     app.run()
 
