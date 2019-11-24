@@ -18,11 +18,12 @@ from scipy import stats
 from sklearn.ensemble import RandomForestRegressor
 from bson import ObjectId
 import math
-from flask_ngrok import run_with_ngrok
+# from flask_ngrok import run_with_ngrok
 
 app=Flask(__name__)
 CORS(app)
-run_with_ngrok(app)
+app.run(debug=True)
+# run_with_ngrok(app)
 
 url='mongodb+srv://test:test@cluster0-12rwi.azure.mongodb.net/test?retryWrites=true&w=majority'
 db_name='shop_list'
