@@ -20,7 +20,7 @@ def recommend():
     user_id = request.args.get('userid')
     recommend_model = recommendation(user_id)
     try:
-        return recommend_model.recommend()
+        return recommend_model.recommend_with_existing_model()
     except Exception as err:
         logging.exception(err)
 
