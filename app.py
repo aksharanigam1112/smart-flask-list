@@ -34,6 +34,10 @@ def predict():
     except Exception as err:
         logging.exception(err)
 
+@app.route('/')
+def welcome():
+    text="Weclome to SmartList API"
+    return text
 
 if __name__ == '__main__':
     app.run(debug=True)
